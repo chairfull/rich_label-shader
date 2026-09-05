@@ -1,0 +1,5 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+Godot_v4.8-dev3_linux.x86_64
