@@ -65,3 +65,7 @@ func resolve_color(fill: Color) -> Color:
 ## Whether the glyph-wide default glow is enabled (mode != NONE).
 func default_is_active() -> bool:
 	return mode != Mode.NONE
+
+## Extra draw layers are a glyph concept; don't run on inline nodes.
+func affects_inline() -> bool:
+	return false

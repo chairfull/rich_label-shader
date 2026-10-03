@@ -66,7 +66,7 @@ Multiple directives in one header are separated by `;`:
 | `~icon_id` | Inline image from the images dir |
 | `~icon_id w=64 h=32` | …with size attrs (`width`/`w`, `height`/`h`) |
 | `~icon_id fit=line valign=center` | `fit`: `line` (default) `none` `contain` `cover`; `valign`: `baseline` `top` `center` `bottom` |
-| `~scene_id` | Inline live scene from the scenes dir |
+| `~scene_id` | Inline live scene from the scenes dir (Control scenes are laid out in the text flow) |
 | `\[`, `\]`, `\~`, `\$`, `\{`, `\\` | Escaped literals |
 
 Unclosed spans are tolerated: a recognized tag left open at end-of-text stays applied to the end; an *unrecognized* `[...]` degrades to literal text.
@@ -153,6 +153,25 @@ func get_vertex() -> String:
 ```
 
 Available hooks: `get_vertex()` / `get_fragment()` (GLSL snippets; `v`, `it`/`intro_t`, `ot`/`outro_t`, `seed`, `origin`, `gsz` in vertex; `c`, `it`, `ot`, `seed` in fragment), `get_layer_count()` + `get_layer_config(i)` for outline/glow/shadow-style extra draw layers, `mutate_font()` / `mutate_font_size()` / `mutate_color()`, and `init_from_args()` for positional params. `TIME` in snippets is rewritten to the label's `fx_time` clock. See `rl_tags/wave.gd` and `rl_tags/outline.gd` for complete examples.
+
+## Inline scenes and tags
+
+`~scene_id` instantiates a `.tscn` (Control scenes are laid out inline in the
+text flow, sized by their minimum size and the `w=`/`h=`/`fit=`/`valign=`
+attributes). Tags apply to the whole inline subtree: the label's material and
+tag instance uniforms are set recursively on all CanvasItem descendants (nodes
+with their own material are left alone), so `[wave]`, `[fade]`, `[rainbow]`
+etc. move and recolor the scene with the text, including the typewriter
+reveal.
+
+Tags decide whether they apply: override `affects_inline() -> bool` in your
+`RichTag` (layer tags like `outline`/`glow`/`shadow` return `false` — extra
+draw layers are a glyph concept).
+
+Scenes can opt out entirely: if the scene root defines
+`func _rich_label_handles_animation() -> bool` returning `true`, the label
+doesn't touch the node's appearance — the scene animates itself (it can read
+the label's `progress` via its parent).
 
 ## Project settings
 

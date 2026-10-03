@@ -1594,6 +1594,9 @@ func _update_shader() -> void:
 		if idx >= 0 and idx < glyph_array_size:
 			var m := 0
 			for t in item.tags:
+				# Tags decide whether they apply to inline nodes.
+				if item is InlineItem and not (t as RichTag).affects_inline():
+					continue
 				m |= int(bits.get(t.get_tag_id(), 0))
 			glyph_mask_arr[idx] = m
 
@@ -1718,27 +1721,47 @@ func _build_pause_breakpoints(mode: StaggerMode, stagger: float, intro: bool) ->
 	bps.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.p < b.p)
 	return bps
 
+## Applies the label's material and tag instance uniforms to an inline
+## scene node and all its CanvasItem descendants, so tags (wave, fade,
+## rainbow, ...) affect the whole subtree. Descendants that already have
+## their own material are left alone — authored materials win.
+##
+## Opt-out: if the scene root defines `_rich_label_handles_animation()`
+## returning true, the label doesn't touch the node's appearance at all;
+## the scene animates itself (it can read the label's `progress` via its
+## parent).
 func _sync_inline_shader_params(inline: InlineItem, masks: PackedInt32Array, need_geom: bool) -> void:
 	var node: CanvasItem = inline.scene_node
-	if not node: return
-	node.material = material
-	node.use_parent_material = false
-	node.set_instance_shader_parameter(&"is_text", false)
-	node.set_instance_shader_parameter(&"inst_index", inline.shader_idx)
-	node.set_instance_shader_parameter(&"inst_seed", 0.0)
-	node.set_instance_shader_parameter(&"inst_intro_t", inline.intro_t)
-	node.set_instance_shader_parameter(&"inst_outro_t", inline.outro_t)
-	if inline.shader_idx >= 0 and masks.size() > inline.shader_idx:
-		node.set_instance_shader_parameter(&"inst_effects_mask", masks[inline.shader_idx])
-	if need_geom:
-		var sz := inline.size if inline.size != Vector2.ZERO else (node.size as Vector2 if "size" in node else Vector2.ZERO)
-		node.set_instance_shader_parameter(&"inst_origin", inline.position + inline.baseline)
-		node.set_instance_shader_parameter(&"inst_size", sz)
-		node.set_instance_shader_parameter(&"inst_font_size", sz.y)
-	if inline.link_index >= 0:
-		node.set_instance_shader_parameter(&"inst_link_idx", mini(inline.link_index, MAX_LINKS - 1))
-	else:
-		node.set_instance_shader_parameter(&"inst_link_idx", -1)
+	if not node:
+		return
+	if node.has_method("_rich_label_handles_animation") and bool(node.call("_rich_label_handles_animation")):
+		return
+	_apply_inline_material_recursive(node, inline, masks, need_geom)
+
+func _apply_inline_material_recursive(node: Node, inline: InlineItem, masks: PackedInt32Array, need_geom: bool) -> void:
+	if node is CanvasItem:
+		var ci := node as CanvasItem
+		if ci.material == null:
+			ci.material = material
+			ci.use_parent_material = false
+			ci.set_instance_shader_parameter(&"is_text", false)
+			ci.set_instance_shader_parameter(&"inst_index", inline.shader_idx)
+			ci.set_instance_shader_parameter(&"inst_seed", 0.0)
+			ci.set_instance_shader_parameter(&"inst_intro_t", inline.intro_t)
+			ci.set_instance_shader_parameter(&"inst_outro_t", inline.outro_t)
+			if inline.shader_idx >= 0 and masks.size() > inline.shader_idx:
+				ci.set_instance_shader_parameter(&"inst_effects_mask", masks[inline.shader_idx])
+			if need_geom:
+				var sz := inline.size if inline.size != Vector2.ZERO else (ci.size as Vector2 if "size" in ci else Vector2.ZERO)
+				ci.set_instance_shader_parameter(&"inst_origin", inline.position + inline.baseline)
+				ci.set_instance_shader_parameter(&"inst_size", sz)
+				ci.set_instance_shader_parameter(&"inst_font_size", sz.y)
+			if inline.link_index >= 0:
+				ci.set_instance_shader_parameter(&"inst_link_idx", mini(inline.link_index, MAX_LINKS - 1))
+			else:
+				ci.set_instance_shader_parameter(&"inst_link_idx", -1)
+	for ch in node.get_children():
+		_apply_inline_material_recursive(ch, inline, masks, need_geom)
 
 static func _strip_comments(s: String) -> String:
 	var out := ""

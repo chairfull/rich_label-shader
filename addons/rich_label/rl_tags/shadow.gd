@@ -20,3 +20,7 @@ func get_layer_count() -> int:
 
 func get_layer_config(_i: int) -> Dictionary:
 	return { sd_bias = spread, color = shadow_color, offset = Vector2(x, y) }
+
+## Extra draw layers are a glyph concept; don't run on inline nodes.
+func affects_inline() -> bool:
+	return false

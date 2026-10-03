@@ -97,3 +97,11 @@ func mutate_font_size(base_size: int) -> int:
 ## Override to tint the fill color for this span.
 func mutate_color(base_color: Color) -> Color:
 	return base_color
+
+## Whether this tag's shader effects apply to inline nodes (images and
+## scenes placed via ~id). The tag's vertex/fragment snippets run for the
+## inline node when true. Layer-based tags (outline, glow, shadow) return
+## false — extra draw layers are a glyph concept. Tags that only make sense
+## for glyph SDF data can also opt out here.
+func affects_inline() -> bool:
+	return true
