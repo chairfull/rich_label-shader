@@ -1,7 +1,7 @@
 @tool
 class_name RTUtils
 
-const LOWER_CASE := "abcdefghijklmnopqrstuvexyz"
+const LOWER_CASE := "abcdefghijklmnopqrstuvwxyz"
 const UPPER_CASE := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 const NUMBERS := "0.123456789"
 const LETTERS := LOWER_CASE + UPPER_CASE

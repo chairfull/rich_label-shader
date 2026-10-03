@@ -91,6 +91,7 @@ var _inline_pool: Dictionary[String, Array] = {}
 var _inline_relayout_pending := false
 var _fx_time := 0.0
 var _uses_fx_clock := false
+var _deco: DecoDraw = null
 ## Persistent default-tag instances carrying the outline/glow defaults. These
 ## are the single source of truth for the glyph-wide default effects; labels no
 ## longer hold their own outline/glow settings (that lives on the tags).
@@ -147,6 +148,8 @@ static var _time_token_re: RegEx
 	set(value):
 		progress = clampf(value, -1.0, 1.0)
 		_set_shader_param("progress", progress)
+		if _deco != null:
+			_deco.queue_redraw()
 		if Engine.is_editor_hint():
 			update_configuration_warnings()
 
@@ -318,6 +321,13 @@ func _set_shader_param(param: StringName, value: Variant) -> void:
 		sm.set_shader_parameter(param, value)
 
 func _ready() -> void:
+	if _deco == null:
+		_deco = DecoDraw.new()
+		_deco.label = self
+		_deco.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_deco.show_behind_parent = true
+		_deco.set_anchors_preset(Control.PRESET_FULL_RECT)
+		add_child(_deco)
 	if _default_outline == null:
 		var os := RTUtils.get_gd_script(&"outline")
 		if os != null:
@@ -393,6 +403,8 @@ func _rebuild() -> void:
 	_sync_inline_nodes()
 	_build_batch_meshes()
 	queue_redraw()
+	if _deco != null:
+		_deco.queue_redraw()
 
 func _build_link_data(items: Array[LayoutItem]) -> void:
 	for t: LinkData in _link_data.values():
@@ -555,6 +567,7 @@ func _segments_to_items(segments: Array[RichParser.ParsedSegment]) -> void:
 			var asset := InlineItem.new()
 			asset.kind = ItemKind.IMAGE if segment.asset_type == "image" else ItemKind.SCENE
 			asset.align = align
+			asset.align_explicit = style.align_explicit
 			asset.sequence_index = seq_index
 			asset.word_index = word_index
 			asset.asset_id = segment.asset_id
@@ -619,6 +632,7 @@ func _segments_to_items(segments: Array[RichParser.ParsedSegment]) -> void:
 				var br := LayoutItem.new()
 				br.kind = ItemKind.LINE_BREAK
 				br.align = align
+				br.align_explicit = style.align_explicit
 				br.sequence_index = seq_index
 				br.advance = 0.0
 				_items.append(br)
@@ -628,7 +642,10 @@ func _segments_to_items(segments: Array[RichParser.ParsedSegment]) -> void:
 			var glyph := Glyph.new()
 			glyph.kind = ItemKind.GLYPH
 			glyph.character = ch
+			glyph.underline = style.underline
+			glyph.strikethrough = style.strikethrough
 			glyph.align = align
+			glyph.align_explicit = style.align_explicit
 			glyph.index = glyph_index
 			if not (ch in ["", "\n", " ", "\t"]):
 				glyph.shader_idx = shader_idx
@@ -753,11 +770,25 @@ func _instantiate_tag(td: RichParser.ParsedTag, style: RichParser.ParsedStyle) -
 	var tag_script := _get_tag_script(tag_name)
 	if not tag_script is Script: return null
 	var tag_inst: RichTag = tag_script.new()
+	# A kwarg naming one of the tag's own exports is that tag's parameter and
+	# wins outright — e.g. [shake amp=6] sets shake's own amp, it must not ALSO
+	# apply as the global effect multiplier.
+	var own := {}
+	for kw in td.kwargs:
+		if kw in tag_inst:
+			tag_inst[kw] = td.kwargs[kw]
+			own[StringName(kw)] = true
 	var props := style.to_props()
 	for prop in props:
-		if prop in tag_inst: tag_inst[prop] = props[prop]
-	for kw in td.kwargs:
-		if kw in tag_inst: tag_inst[kw] = td.kwargs[kw]
+		if not (prop in tag_inst) or prop in own:
+			continue
+		# strength=/speed= are global multipliers, but not when the tag consumed
+		# the same-named kwarg as its own parameter (see above).
+		if prop == &"effect_strength" and (own.has(&"amp") or own.has(&"strength")):
+			continue
+		if prop == &"effect_speed" and own.has(&"speed"):
+			continue
+		tag_inst[prop] = props[prop]
 	tag_inst.init_from_args(td.args)
 	return tag_inst
 
@@ -890,15 +921,30 @@ static func _push_line(lines: Array[LayoutLine], line: LayoutLine) -> void:
 	line.index = lines.size()
 	lines.append(line)
 
+## Label-level default alignment as an AlignMode. Used for items whose span
+## did not set alignment explicitly.
+func _default_align() -> int:
+	match horizontal_alignment:
+		HORIZONTAL_ALIGNMENT_CENTER:
+			return AlignMode.CENTER
+		HORIZONTAL_ALIGNMENT_RIGHT:
+			return AlignMode.RIGHT
+		HORIZONTAL_ALIGNMENT_FILL:
+			return AlignMode.FILL
+		_:
+			return AlignMode.LEFT
+
 func _place_line(line: LayoutLine, container_w: float, y: float) -> void:
 	var center_items: Array[LayoutItem]
 	var left_items: Array[LayoutItem]
 	var right_items: Array[LayoutItem]
 	var fill_items: Array[LayoutItem]
 	var groups := { AlignMode.CENTER: center_items, AlignMode.RIGHT: right_items, AlignMode.FILL: fill_items, AlignMode.LEFT: left_items }
+	var default_align := _default_align()
 	for item in line.items:
-		groups[item.align].append(item)
-	
+		var eff := item.align if item.align_explicit else default_align
+		groups[eff].append(item)
+
 	var left_w := _group_width(left_items)
 	var center_w := _group_width(center_items)
 	var right_w := _group_width(right_items)
@@ -906,14 +952,7 @@ func _place_line(line: LayoutLine, container_w: float, y: float) -> void:
 	var fill_spaces := _count_spaces(fill_items)
 	var fill_step := fill_extra / float(fill_spaces) if fill_spaces > 0 else 0.0
 
-	var has_explicit_alignment := center_items.size() > 0 or right_items.size() > 0 or fill_items.size() > 0
 	var x := 0.0
-	if not has_explicit_alignment:
-		match horizontal_alignment:
-			HORIZONTAL_ALIGNMENT_CENTER:
-				x = maxf(0.0, (container_w - left_w) * 0.5)
-			HORIZONTAL_ALIGNMENT_RIGHT:
-				x = maxf(0.0, container_w - left_w)
 	for item in left_items:
 		_apply_item_position(item, x, y, line)
 		x += _item_draw_advance(item, fill_step)
@@ -1039,6 +1078,43 @@ func _get_configuration_warnings() -> PackedStringArray:
 	if progress != 0.0:
 		return ["Characters may be hidden if progress != 0.0."]
 	return []
+
+## Draws underline / strikethrough bars on `drawer` (the DecoDraw child, so the
+## label's text material doesn't shade them). Each glyph's bar fades with the
+## same reveal factor the shader uses, so decorations follow typewriter
+## intros/outros instead of popping in fully formed.
+func draw_decorations(drawer: CanvasItem) -> void:
+	var w_intro := maxf(0.001, 1.0 - anim_intro_stagger)
+	var w_outro := maxf(0.001, 1.0 - anim_outro_stagger)
+	var p_intro := clampf(progress + 1.0, 0.0, 1.0)
+	var p_outro := clampf(progress, 0.0, 1.0)
+	for item in _items:
+		if item.kind != ItemKind.GLYPH:
+			continue
+		var g := item as Glyph
+		if not g.underline and not g.strikethrough:
+			continue
+		if g.character in ["", "\n"]:
+			continue
+		var it := clampf((p_intro - g.intro_t * anim_intro_stagger) / w_intro, 0.0, 1.0)
+		var ot := clampf((p_outro - g.outro_t * anim_outro_stagger) / w_outro, 0.0, 1.0)
+		var anim := it * (1.0 - ot)
+		if anim <= 0.001:
+			continue
+		var f := _get_font_for_glyph(g)
+		if f == null:
+			continue
+		var fs := _resolved_font_size(g.font_size)
+		var baseline_y := g.position.y + g.baseline.y
+		var col := g.fill_color
+		col.a *= anim
+		var thick := maxf(1.0, f.get_underline_thickness(fs))
+		if g.underline:
+			var u_y := baseline_y + f.get_underline_position(fs)
+			drawer.draw_rect(Rect2(g.position.x, u_y, g.advance, thick), col)
+		if g.strikethrough:
+			var s_y := baseline_y - f.get_ascent(fs) * 0.35 - thick * 0.5
+			drawer.draw_rect(Rect2(g.position.x, s_y, g.advance, thick), col)
 
 func _draw() -> void:
 	if material == null:
@@ -1333,6 +1409,10 @@ func _update_shader() -> void:
 					seen[id] = true
 					unique_tags.append(t)
 	var bits := {}
+	# Tag bits ride a GLSL 32-bit int mask — bit 31 is the sign bit, so 31
+	# distinct tag variants is the hard ceiling per label.
+	if unique_tags.size() > 31:
+		push_warning("RichLabel: more than 31 distinct tag variants on one label; effect bits will collide. Split the text across labels.")
 	for i in unique_tags.size():
 		bits[unique_tags[i].get_tag_id()] = 1 << i
 
@@ -1651,7 +1731,7 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 			"\tbase_outro_t = glyph_outro_t[glyph];",
 			"\tseed         = glyph_seed_arr[glyph];",
 		])
-		if has_lnks: cv.append("\tfloat link_state = link_states_arr[min(int(glyph_link_idx[glyph]), %d)];" % (link_cap - 1))
+		if has_lnks: cv.append("\tfloat link_state = 1.0;\n\tif (glyph_link_idx[glyph] >= 0) { link_state = link_states_arr[min(int(glyph_link_idx[glyph]), %d)]; }" % (link_cap - 1))
 		cv.append_array([
 			"} else {",
 			"\tlayer        = 0;",
@@ -1661,7 +1741,7 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 			"\tbase_outro_t = inst_outro_t;",
 			"\tseed         = inst_seed;",
 		])
-		if has_lnks: cv.append("\tfloat link_state = link_states_arr[int(clamp(inst_link_idx, 0.0, %.1f))];" % float(link_cap - 1))
+		if has_lnks: cv.append("\tfloat link_state = 1.0;\n\tif (inst_link_idx >= 0.0) { link_state = link_states_arr[int(min(inst_link_idx, %.1f))]; }" % float(link_cap - 1))
 		cv.append("}")
 	else:
 		cv.append_array([
@@ -1672,7 +1752,7 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 			"float base_outro_t = glyph_outro_t[glyph];",
 			"float seed         = glyph_seed_arr[glyph];",
 		])
-		if has_lnks: cv.append("float link_state = link_states_arr[min(int(glyph_link_idx[glyph]), %d)];" % (link_cap - 1))
+		if has_lnks: cv.append("float link_state = 1.0;\n\tif (glyph_link_idx[glyph] >= 0) { link_state = link_states_arr[min(int(glyph_link_idx[glyph]), %d)]; }" % (link_cap - 1))
 	cv.append_array([
 		"float intro_t = clamp((p_intro - base_intro_t * intro_stagger) / w_intro, 0.0, 1.0);",
 		"float outro_t = clamp((p_outro - base_outro_t * outro_stagger) / w_outro, 0.0, 1.0);",
@@ -1860,6 +1940,11 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 	var get_color  := "get_text_color(c, glyph, tex, TEXTURE_PIXEL_SIZE, UV, layer);"
 	var color_stmt := ("if (is_text) { %s } else { c = tex; }" % get_color) if has_imgs else get_color
 	var frag_body  := ("\n\t" + "\n\t".join(PackedStringArray(frag_calls))) if frag_calls else ""
+	# Link hover feedback: link_state animates 1.0 (idle) -> 2.0 (hovered) on
+	# the CPU; brighten smoothly here so links visibly respond to the cursor.
+	var hover_stmt := ""
+	if has_lnks:
+		hover_stmt = "\n\t{\n\t\tfloat hov = clamp(link_state - 1.0, 0.0, 1.0);\n\t\tc.rgb = mix(c.rgb, min(c.rgb * 1.3 + vec3(0.08), vec3(1.0)), hov);\n\t}"
 	# MSDF glow: dilate the distance field itself with a tap kernel (max over
 	# neighbors minus their offset, in SDF units) so the halo can extend well
 	# beyond the atlas' own distance band — one pass, no extra draws.
@@ -1897,9 +1982,9 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 	%s
 	vec4 tex = texture(TEXTURE, UV);
 	vec4 c;
-	%s%s%s%s
+	%s%s%s%s%s
 	COLOR = c;
-}""" % [common_vars, color_stmt, dilation_stmt, glow_stmt, frag_body])
+}""" % [common_vars, color_stmt, dilation_stmt, glow_stmt, frag_body, hover_stmt])
 
 	# Uniform budget sanity check.
 	var uni_bytes := arr_sz * 16 \
@@ -1947,9 +2032,21 @@ func _get_property_list() -> Array[Dictionary]:
 			.pFloat("line_spacing", -8.0, 64.0, 0.1, "px")\
 		.end()
 
+## Dedicated child Control that draws underline/strikethrough bars. It must
+## be a separate canvas item because draw_* calls on the label itself would be
+## shaded by the label's generated text material (sampling the font atlas).
+class DecoDraw extends Control:
+	var label: RichLabel = null
+	func _draw() -> void:
+		if label != null:
+			label.draw_decorations(self)
+
 class LayoutItem extends RefCounted:
 	var kind := ItemKind.GLYPH
 	var align := AlignMode.LEFT
+	## True when the span explicitly set alignment ([left]/[center]/...).
+	## Explicit alignment wins over the label's horizontal_alignment default.
+	var align_explicit := false
 	var position := Vector2.ZERO
 	var size := Vector2.ZERO
 	var baseline := Vector2.ZERO
@@ -1971,6 +2068,8 @@ class Glyph extends LayoutItem:
 	var font_size := 24
 	var seed := 0.0
 	var fill_color := Color.WHITE
+	var underline := false
+	var strikethrough := false
 	var layer_count := 1
 	## Shaped advance (kerning-aware) in px, or -1.0 to measure naively.
 	var advance_override := -1.0

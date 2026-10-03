@@ -11,6 +11,13 @@ extends RichTag
 ## 0 = all same color. 0.1 = gradual rainbow. 1.0 = full spectrum per char.
 @export_range(0.0, 1.0, 0.01) var phase_spread: float = 0.1
 
+## Global rate multiplier. Set from markup via [tag speed=0.5].
+## Multiplies this tag's frequency.
+@export var effect_speed := 1.0
+## Global intensity multiplier. Set from markup via [tag strength=2].
+## Scales this tag's saturation.
+@export var effect_strength := 1.0
+
 func get_helper_funcs() -> String:
 	return """vec3 _fx_rainbow_hsv2rgb(float h, float s, float v2) {
 	vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
@@ -22,4 +29,4 @@ func get_fragment() -> String:
 	return """
 	float hue = fract(TIME * %f + seed * %f);
 	vec3  rgb = _fx_rainbow_hsv2rgb(hue, %f, %f);
-	c.rgb *= mix(vec3(1.0), rgb, anim);""" % [speed, phase_spread, saturation, value]
+	c.rgb *= mix(vec3(1.0), rgb, anim);""" % [speed * effect_speed, phase_spread, saturation * effect_strength, value]

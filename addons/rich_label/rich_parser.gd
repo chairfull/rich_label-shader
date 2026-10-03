@@ -35,7 +35,9 @@ class ParsedStyle extends RefCounted:
 	var bold: bool = false
 	var italic: bool = false
 	var underline: bool = false
+	var strikethrough: bool = false
 	var align: String = ""
+	var align_explicit: bool = false
 	var font_size: int = -1
 	var font_scale: float = -1.0
 	var font_asset: String = ""
@@ -54,7 +56,9 @@ class ParsedStyle extends RefCounted:
 		c.bold = bold
 		c.italic = italic
 		c.underline = underline
+		c.strikethrough = strikethrough
 		c.align = align
+		c.align_explicit = align_explicit
 		c.font_size = font_size
 		c.font_scale = font_scale
 		c.font_asset = font_asset
@@ -77,7 +81,9 @@ class ParsedStyle extends RefCounted:
 		if delta.bold:                      m.bold         = true
 		if delta.italic:                    m.italic       = true
 		if delta.underline:                 m.underline    = true
+		if delta.strikethrough:           m.strikethrough = true
 		if delta.align        != "":        m.align        = delta.align
+		if delta.align_explicit:           m.align_explicit = true
 		if delta.font_size    >= 0:         m.font_size    = delta.font_size
 		if delta.font_scale   >= 0.0:       m.font_scale   = delta.font_scale
 		if delta.font_asset   != "":        m.font_asset   = delta.font_asset
@@ -98,7 +104,9 @@ class ParsedStyle extends RefCounted:
 		if bold         != other.bold         : return false
 		if italic       != other.italic       : return false
 		if underline    != other.underline    : return false
+		if strikethrough != other.strikethrough: return false
 		if align        != other.align        : return false
+		if align_explicit != other.align_explicit: return false
 		if font_size    != other.font_size    : return false
 		if font_scale   != other.font_scale   : return false
 		if font_asset   != other.font_asset   : return false
@@ -113,7 +121,7 @@ class ParsedStyle extends RefCounted:
 	## True when this style delta actually changes something the renderer
 	## understands (used to decide whether an unclosed span should auto-close).
 	func is_meaningful() -> bool:
-		if color != NO_COLOR or bold or italic or underline: return true
+		if color != NO_COLOR or bold or italic or underline or strikethrough: return true
 		if align != "" or has_link_meta:                    return true
 		if font_size >= 0 or font_scale >= 0.0:             return true
 		if font_asset != "":                                return true
@@ -132,6 +140,7 @@ class ParsedStyle extends RefCounted:
 		if bold:                       d[&"bold"]            = bold
 		if italic:                     d[&"italic"]          = italic
 		if underline:                  d[&"underline"]       = underline
+		if strikethrough:             d[&"strikethrough"]  = strikethrough
 		if align         != "":        d[&"align"]           = align
 		if font_size     >= 0:         d[&"font_size"]       = font_size
 		if font_scale    >= 0.0:       d[&"font_scale"]      = font_scale
@@ -379,6 +388,7 @@ static func _apply_directive(delta: ParsedStyle, tag: ParsedTag) -> void:
 	match name:
 		"left", "right", "center", "fill":
 			delta.align = name
+			delta.align_explicit = true
 			return
 		"b", "bold":
 			delta.bold = true
@@ -388,6 +398,9 @@ static func _apply_directive(delta: ParsedStyle, tag: ParsedTag) -> void:
 			return
 		"u", "underline":
 			delta.underline = true
+			return
+		"s", "strike", "strikethrough":
+			delta.strikethrough = true
 			return
 
 	# Integer → absolute font size; float → relative scale.

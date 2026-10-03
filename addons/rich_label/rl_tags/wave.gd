@@ -11,6 +11,13 @@ extends RichTag
 
 @export_enum("Vertical:0", "Horizontal:1", "Circular:2") var axis: int = 0
 
+## Global intensity multiplier. Set from markup via [tag strength=2]
+## (or the `amp` alias). Multiplies this tag's amplitude/distance.
+@export var effect_strength := 1.0
+## Global rate multiplier. Set from markup via [tag speed=0.5].
+## Multiplies this tag's frequency.
+@export var effect_speed := 1.0
+
 func get_vertex() -> String:
 	return """
 	float phase  = seed * %f * TAU;
@@ -21,4 +28,4 @@ func get_vertex() -> String:
 	else {
 		v.y += sin(t) * %f * anim;
 		v.x += cos(t) * %f * anim;
-	}""" % [phase_spread, frequency, amplitude, axis, axis, amplitude, amplitude]
+	}""" % [phase_spread, frequency * effect_speed, amplitude * effect_strength, axis, axis, amplitude * effect_strength, amplitude * effect_strength]

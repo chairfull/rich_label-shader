@@ -9,6 +9,13 @@ extends RichTag
 @export var frequency:    float = 1.2
 @export_range(0.0, 1.0, 0.01) var phase_spread: float = 0.3
 
+## Global intensity multiplier. Set from markup via [tag strength=2]
+## (or the `amp` alias). Multiplies this tag's amplitude/distance.
+@export var effect_strength := 1.0
+## Global rate multiplier. Set from markup via [tag speed=0.5].
+## Multiplies this tag's frequency.
+@export var effect_speed := 1.0
+
 func get_vertex() -> String:
 	return ("""
 	float phase  = seed * %f * TAU;
@@ -17,4 +24,4 @@ func get_vertex() -> String:
 	// Vertices below the baseline get a small negative offset; above get positive.
 	float dist_above_baseline = origin.y - v.y;
 	v.x += dist_above_baseline * skew;
-	""") % [phase_spread, frequency, amplitude]
+	""") % [phase_spread, frequency * effect_speed, amplitude * effect_strength]

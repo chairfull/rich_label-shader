@@ -3,8 +3,8 @@
 ## tilting slightly in-place. Characters each use their seed for a random phase
 ## so the rotations are de-synchronised.
 ##
-## Usage:  [tumble] text [/tumble]
-##         [tumble amount=0.4 speed=0.8 perspective=2.0] text [/tumble]
+## Usage:  [tumble]text]
+##         [tumble amount=0.4 speed=0.8 perspective=2.0]text]
 @tool
 extends RichTag
 
@@ -16,6 +16,13 @@ extends RichTag
 
 ## Perspective depth factor. Higher = more pronounced near/far size difference.
 @export_range(0.0, 4.0, 0.05) var perspective: float = 1.5
+
+## Global intensity multiplier. Set from markup via [tag strength=2]
+## (or the `amp` alias). Multiplies this tag's amplitude/distance.
+@export var effect_strength := 1.0
+## Global rate multiplier. Set from markup via [tag speed=0.5].
+## Multiplies this tag's frequency.
+@export var effect_speed := 1.0
 
 func get_tag_id() -> StringName:
 	return &"tumble"
@@ -42,4 +49,4 @@ float _pz2 = -_p.y * _sx + _pz * _cx;
 float _z_norm = _pz2 / max(1.0, font_size);
 float _zf = 1.0 / max(0.01, 1.0 - _z_norm * %.6f);
 v = _ctr + vec2(_px, _py) * _zf;
-""") % [speed, amount, speed, amount, perspective]
+""") % [speed * effect_speed, amount * effect_strength, speed * effect_speed, amount * effect_strength, perspective]
