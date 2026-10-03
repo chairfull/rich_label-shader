@@ -91,7 +91,8 @@ var _inline_pool: Dictionary[String, Array] = {}
 var _inline_relayout_pending := false
 var _fx_time := 0.0
 var _uses_fx_clock := false
-var _deco: DecoDraw = null
+var _bar_surfaces: Array[Dictionary] = []  ## { tex: Texture2D, mesh: ArrayMesh } for underline/strikethrough bars
+static var _bar_white_tex: Texture2D = null
 ## Persistent default-tag instances carrying the outline/glow defaults. These
 ## are the single source of truth for the glyph-wide default effects; labels no
 ## longer hold their own outline/glow settings (that lives on the tags).
@@ -140,6 +141,49 @@ static var _time_token_re: RegEx
 			color = value
 			rebuild()
 
+## Underline / strikethrough tint. Transparent (default) = the bar follows the
+## glyph's fill color; any alpha blends toward the tint. Applied in the
+## generated shader, so bars ride the same reveal, motion and hover as text.
+@export var underline_color := Color(0, 0, 0, 0):
+	set(value):
+		if underline_color != value:
+			underline_color = value
+			_set_shader_param(&"underline_color", value)
+
+@export var strikethrough_color := Color(0, 0, 0, 0):
+	set(value):
+		if strikethrough_color != value:
+			strikethrough_color = value
+			_set_shader_param(&"strikethrough_color", value)
+
+## Multiplier on the font's underline thickness (1 = font default). Rebuilds geometry.
+@export_range(0.1, 8.0, 0.05) var underline_thickness := 1.0:
+	set(value):
+		if underline_thickness != value:
+			underline_thickness = value
+			rebuild()
+
+## Extra pixels added to the font's underline position (+ = lower). Rebuilds geometry.
+@export_range(-32.0, 32.0, 0.5) var underline_offset := 0.0:
+	set(value):
+		if underline_offset != value:
+			underline_offset = value
+			rebuild()
+
+## Multiplier on the font's underline thickness, for strikethrough bars.
+@export_range(0.1, 8.0, 0.05) var strikethrough_thickness := 1.0:
+	set(value):
+		if strikethrough_thickness != value:
+			strikethrough_thickness = value
+			rebuild()
+
+## Extra pixels added to the strikethrough position (+ = lower). Rebuilds geometry.
+@export_range(-32.0, 32.0, 0.5) var strikethrough_offset := 0.0:
+	set(value):
+		if strikethrough_offset != value:
+			strikethrough_offset = value
+			rebuild()
+
 ## Default outline/glow behavior lives on the [outline] and [glow] tags
 ## (rl_tags/outline.gd, rl_tags/glow.gd); this label only keeps default-tag
 ## instances to drive the glyph-wide defaults.
@@ -148,8 +192,6 @@ static var _time_token_re: RegEx
 	set(value):
 		progress = clampf(value, -1.0, 1.0)
 		_set_shader_param("progress", progress)
-		if _deco != null:
-			_deco.queue_redraw()
 		if Engine.is_editor_hint():
 			update_configuration_warnings()
 
@@ -321,13 +363,6 @@ func _set_shader_param(param: StringName, value: Variant) -> void:
 		sm.set_shader_parameter(param, value)
 
 func _ready() -> void:
-	if _deco == null:
-		_deco = DecoDraw.new()
-		_deco.label = self
-		_deco.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_deco.show_behind_parent = true
-		_deco.set_anchors_preset(Control.PRESET_FULL_RECT)
-		add_child(_deco)
 	if _default_outline == null:
 		var os := RTUtils.get_gd_script(&"outline")
 		if os != null:
@@ -403,8 +438,6 @@ func _rebuild() -> void:
 	_sync_inline_nodes()
 	_build_batch_meshes()
 	queue_redraw()
-	if _deco != null:
-		_deco.queue_redraw()
 
 func _build_link_data(items: Array[LayoutItem]) -> void:
 	for t: LinkData in _link_data.values():
@@ -1079,43 +1112,6 @@ func _get_configuration_warnings() -> PackedStringArray:
 		return ["Characters may be hidden if progress != 0.0."]
 	return []
 
-## Draws underline / strikethrough bars on `drawer` (the DecoDraw child, so the
-## label's text material doesn't shade them). Each glyph's bar fades with the
-## same reveal factor the shader uses, so decorations follow typewriter
-## intros/outros instead of popping in fully formed.
-func draw_decorations(drawer: CanvasItem) -> void:
-	var w_intro := maxf(0.001, 1.0 - anim_intro_stagger)
-	var w_outro := maxf(0.001, 1.0 - anim_outro_stagger)
-	var p_intro := clampf(progress + 1.0, 0.0, 1.0)
-	var p_outro := clampf(progress, 0.0, 1.0)
-	for item in _items:
-		if item.kind != ItemKind.GLYPH:
-			continue
-		var g := item as Glyph
-		if not g.underline and not g.strikethrough:
-			continue
-		if g.character in ["", "\n"]:
-			continue
-		var it := clampf((p_intro - g.intro_t * anim_intro_stagger) / w_intro, 0.0, 1.0)
-		var ot := clampf((p_outro - g.outro_t * anim_outro_stagger) / w_outro, 0.0, 1.0)
-		var anim := it * (1.0 - ot)
-		if anim <= 0.001:
-			continue
-		var f := _get_font_for_glyph(g)
-		if f == null:
-			continue
-		var fs := _resolved_font_size(g.font_size)
-		var baseline_y := g.position.y + g.baseline.y
-		var col := g.fill_color
-		col.a *= anim
-		var thick := maxf(1.0, f.get_underline_thickness(fs))
-		if g.underline:
-			var u_y := baseline_y + f.get_underline_position(fs)
-			drawer.draw_rect(Rect2(g.position.x, u_y, g.advance, thick), col)
-		if g.strikethrough:
-			var s_y := baseline_y - f.get_ascent(fs) * 0.35 - thick * 0.5
-			drawer.draw_rect(Rect2(g.position.x, s_y, g.advance, thick), col)
-
 func _draw() -> void:
 	if material == null:
 		_ensure_shader_material()
@@ -1124,6 +1120,7 @@ func _draw() -> void:
 		var ci := get_canvas_item()
 		for s in _batch_surfaces:
 			RenderingServer.canvas_item_add_mesh(ci, (s.mesh as ArrayMesh).get_rid(), Transform2D(), Color(1, 1, 1, 1), s.tex)
+		_draw_bar_surfaces(ci)
 		return
 
 	for layer_i in range(_total_layers - 1, 0, -1):
@@ -1134,6 +1131,13 @@ func _draw() -> void:
 	for item in _items:
 		if item.kind == ItemKind.GLYPH:
 			_draw_glyph_layer(item as Glyph, 0)
+	_draw_bar_surfaces(get_canvas_item())
+
+## Draws the underline/strikethrough bar meshes (built for both batch and
+## draw_char paths — the bars always go through the generated shader).
+func _draw_bar_surfaces(ci: RID) -> void:
+	for s in _bar_surfaces:
+		RenderingServer.canvas_item_add_mesh(ci, (s.mesh as ArrayMesh).get_rid(), Transform2D(), Color(1, 1, 1, 1), s.tex)
 
 ## Bakes every visible glyph layer into one triangle mesh per font atlas,
 ## replacing hundreds/thousands of draw_char commands with a single
@@ -1141,6 +1145,8 @@ func _draw() -> void:
 ## identical to the draw_char path, so the generated shader is unchanged.
 func _build_batch_meshes() -> void:
 	_batch_surfaces.clear()
+	_bar_surfaces.clear()
+	_build_bar_meshes()
 	if not use_batched_mesh or _items.is_empty():
 		return
 
@@ -1226,6 +1232,87 @@ func _build_batch_meshes() -> void:
 		var mesh := ArrayMesh.new()
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrs)
 		_batch_surfaces.append({ mesh = mesh, tex = tex_rid })
+
+## Builds underline/strikethrough bars as mesh quads in a single surface with
+## a 1x1 white texture. Each bar carries its glyph's identity encoding plus the
+## decoration kind in COLOR.b (1 = underline, 2 = strikethrough). Sampling
+## white means the fragment shader treats every bar as a solid bar of the
+## glyph's processed color — same reveal, motion, hover and tag effects as the
+## text itself, with zero CPU per-frame cost. Bars are built for both the
+## batched and the draw_char paths.
+func _build_bar_meshes() -> void:
+	if _bar_white_tex == null:
+		var img := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		_bar_white_tex = ImageTexture.create_from_image(img)
+	var specs: Array[Glyph] = []
+	for item in _items:
+		if item.kind != ItemKind.GLYPH:
+			continue
+		var g := item as Glyph
+		if g.underline or g.strikethrough:
+			specs.append(g)
+	if specs.is_empty():
+		return
+	var v := PackedVector2Array()
+	var u := PackedVector2Array()
+	var c := PackedColorArray()
+	var idx := PackedInt32Array()
+	for g in specs:
+		var rep := g
+		if g.shader_idx < 0:
+			# Whitespace carries no shader identity — borrow the nearest
+			# drawn glyph's (its timing/color are effectively identical).
+			rep = _nearest_drawn_glyph(g)
+			if rep == null:
+				continue
+		var f := _get_font_for_glyph(rep)
+		if f == null:
+			continue
+		var fs := _resolved_font_size(rep.font_size)
+		var baseline_y := g.position.y + g.baseline.y
+		var idx_norm := float(rep.shader_idx) / float(maxi(1, _total_glyphs - 1))
+		if g.underline:
+			var thick := maxf(1.0, f.get_underline_thickness(fs)) * underline_thickness
+			var y := baseline_y + f.get_underline_position(fs) + underline_offset
+			_emit_bar(v, u, c, idx, Rect2(g.position.x, y, g.advance, thick), idx_norm, 1.0)
+		if g.strikethrough:
+			var thick2 := maxf(1.0, f.get_underline_thickness(fs)) * strikethrough_thickness
+			var y2 := baseline_y - f.get_ascent(fs) * 0.35 - thick2 * 0.5 + strikethrough_offset
+			_emit_bar(v, u, c, idx, Rect2(g.position.x, y2, g.advance, thick2), idx_norm, 2.0)
+	var arrs := []
+	arrs.resize(Mesh.ARRAY_MAX)
+	arrs[Mesh.ARRAY_VERTEX] = v
+	arrs[Mesh.ARRAY_TEX_UV] = u
+	arrs[Mesh.ARRAY_COLOR] = c
+	arrs[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrs)
+	_bar_surfaces.append({ mesh = mesh, tex = _bar_white_tex.get_rid() })
+
+## Nearest glyph with shader_idx >= 0 to `g` in layout order, for whitespace
+## (which has no shader identity of its own).
+func _nearest_drawn_glyph(g: Glyph) -> Glyph:
+	var gi := _items.find(g)
+	if gi < 0:
+		return null
+	var j := 1
+	while gi - j >= 0 or gi + j < _items.size():
+		for k in [gi - j, gi + j]:
+			if k >= 0 and k < _items.size():
+				var it := _items[k]
+				if it.kind == ItemKind.GLYPH and (it as Glyph).shader_idx >= 0:
+					return it as Glyph
+		j += 1
+	return null
+
+func _emit_bar(v: PackedVector2Array, u: PackedVector2Array, c: PackedColorArray, idx: PackedInt32Array, rect: Rect2, idx_norm: float, kind: float) -> void:
+	var col := Color(idx_norm, 0.0, kind, 1.0)
+	var n := v.size()
+	v.append_array(PackedVector2Array([rect.position, Vector2(rect.end.x, rect.position.y), rect.end, Vector2(rect.position.x, rect.end.y)]))
+	u.append_array(PackedVector2Array([Vector2.ZERO, Vector2.RIGHT, Vector2.ONE, Vector2.DOWN]))
+	c.append(col); c.append(col); c.append(col); c.append(col)
+	idx.append_array(PackedInt32Array([n, n + 1, n + 2, n, n + 2, n + 3]))
 
 ## Draws a specific layer of a glyph with its index encoded in COLOR.r and layer in COLOR.g.
 func _draw_glyph_layer(glyph: Glyph, layer_i: int) -> void:
@@ -1481,6 +1568,8 @@ func _update_shader() -> void:
 	_set_shader_param(&"progress", progress)
 	_set_shader_param(&"intro_stagger", anim_intro_stagger)
 	_set_shader_param(&"outro_stagger", anim_outro_stagger)
+	_set_shader_param(&"underline_color", underline_color)
+	_set_shader_param(&"strikethrough_color", strikethrough_color)
 
 	_update_link_shader_state()
 
@@ -1753,6 +1842,10 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 			"float seed         = glyph_seed_arr[glyph];",
 		])
 		if has_lnks: cv.append("float link_state = 1.0;\n\tif (glyph_link_idx[glyph] >= 0) { link_state = link_states_arr[min(int(glyph_link_idx[glyph]), %d)]; }" % (link_cap - 1))
+	if has_imgs:
+		cv.append("float deco_kind = is_text ? rl_xfer.z : 0.0;")
+	else:
+		cv.append("float deco_kind = rl_xfer.z;")
 	cv.append_array([
 		"float intro_t = clamp((p_intro - base_intro_t * intro_stagger) / w_intro, 0.0, 1.0);",
 		"float outro_t = clamp((p_outro - base_outro_t * outro_stagger) / w_outro, 0.0, 1.0);",
@@ -1784,7 +1877,7 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 		# Fragment COLOR arrives pre-multiplied by the texture sample, which
 		# corrupts the encoding for MSDF fonts (RGB holds distance data);
 		# vertex COLOR is still raw.
-		"varying vec2 rl_xfer;",
+		"varying vec3 rl_xfer;",
 	]
 
 	# Instance uniforms — only present when inline images exist.
@@ -1815,6 +1908,9 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 		"uniform float progress      : hint_range(-1.0, 1.0) = 0.0;",
 		"uniform float intro_stagger : hint_range(0.01, 0.99) = 0.0;",
 		"uniform float outro_stagger : hint_range(0.01, 0.99) = 0.0;",
+		"group_uniforms Decorations;",
+		"uniform vec4 underline_color      = vec4(0.0);",
+		"uniform vec4 strikethrough_color  = vec4(0.0);",
 	]
 	if has_lnks: su.append("uniform float link_states_arr[%d];" % link_cap)
 	if _uses_fx_clock:
@@ -1929,7 +2025,7 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 	# fragment stage via rl_xfer, even when no tag contributes vertex code.
 	out.append("""void vertex() {
 	vec2 v = VERTEX;
-	rl_xfer = vec2(clamp(COLOR.r, 0.0, 1.0), clamp(COLOR.g, 0.0, 1.0));
+	rl_xfer = vec3(clamp(COLOR.r, 0.0, 1.0), clamp(COLOR.g, 0.0, 1.0), COLOR.b);
 	%s
 	%s
 	%s
@@ -1945,6 +2041,10 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 	var hover_stmt := ""
 	if has_lnks:
 		hover_stmt = "\n\t{\n\t\tfloat hov = clamp(link_state - 1.0, 0.0, 1.0);\n\t\tc.rgb = mix(c.rgb, min(c.rgb * 1.3 + vec3(0.08), vec3(1.0)), hov);\n\t}"
+	# Decoration bars (underline/strikethrough quads, deco_kind 1/2) sampled
+	# their glyph's ink-center texel, so they arrive here as solid bars of the
+	# glyph's processed color. Blend toward the tint color if one is set.
+	var deco_stmt := "\n\tif (deco_kind > 0.5) {\n\t\tvec4 dtint = deco_kind < 1.5 ? underline_color : strikethrough_color;\n\t\tc.rgb = mix(c.rgb, dtint.rgb, dtint.a);\n\t}"
 	# MSDF glow: dilate the distance field itself with a tap kernel (max over
 	# neighbors minus their offset, in SDF units) so the halo can extend well
 	# beyond the atlas' own distance band — one pass, no extra draws.
@@ -1982,9 +2082,9 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 	%s
 	vec4 tex = texture(TEXTURE, UV);
 	vec4 c;
-	%s%s%s%s%s
+	%s%s%s%s%s%s
 	COLOR = c;
-}""" % [common_vars, color_stmt, dilation_stmt, glow_stmt, frag_body, hover_stmt])
+}""" % [common_vars, color_stmt, dilation_stmt, glow_stmt, frag_body, deco_stmt, hover_stmt])
 
 	# Uniform budget sanity check.
 	var uni_bytes := arr_sz * 16 \
@@ -2031,15 +2131,6 @@ func _get_property_list() -> Array[Dictionary]:
 			.pFloat("char_spacing", -8.0, 32.0, 0.1, "px")\
 			.pFloat("line_spacing", -8.0, 64.0, 0.1, "px")\
 		.end()
-
-## Dedicated child Control that draws underline/strikethrough bars. It must
-## be a separate canvas item because draw_* calls on the label itself would be
-## shaded by the label's generated text material (sampling the font atlas).
-class DecoDraw extends Control:
-	var label: RichLabel = null
-	func _draw() -> void:
-		if label != null:
-			label.draw_decorations(self)
 
 class LayoutItem extends RefCounted:
 	var kind := ItemKind.GLYPH

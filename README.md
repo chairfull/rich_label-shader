@@ -53,8 +53,8 @@ Multiple directives in one header are separated by `;`:
 |---|---|
 | `[wave]text]` | Effect span (see tag table). Closes with `]`, nests freely |
 | `[b]`, `[i]` | Faux bold / faux italic (font variations, no bold font file needed) |
-| `[u]` | Underline |
-| `[s]`, `[strike]` | Strikethrough |
+| `[u]` | Underline (shader-rendered bar, follows effects) |
+| `[s]`, `[strike]` | Strikethrough (shader-rendered bar, follows effects) |
 | `[24]`, `[1.5]` | Absolute font size / relative scale |
 | `[red]`, `[#ff8800]` | Named or hex color (any `Color.from_string` value) |
 | `[tint color=#4fc3ff]` | Replace fill color for the span |
@@ -185,4 +185,4 @@ The smoke test exercises the parser, layout, shaping, shader generation, batchin
 
 - `{expressions}` are evaluated with Godot's `Expression` against your `context` node and **can call its methods** — only bind contexts you trust.
 - The shader identity encoding supports at most 31 distinct tag variants per label (GLSL `int` bitmask); beyond that the label logs a warning and extra tags share the last slot.
-- Underline/strikethrough bars are drawn on the CPU (a child Control behind the text), so unlike the glyphs they don't get GPU effect motion — they follow the reveal factor only.
+- Underline/strikethrough bars are extra quads in the label's batch mesh, so they ride the generated shader like glyphs: they wave, rainbow, fade and hover with the text, at zero CPU per-frame cost. Customize them with the `underline_color` / `strikethrough_color` (transparent = follow the glyph fill), `underline_thickness` / `strikethrough_thickness` (× font default) and `underline_offset` / `strikethrough_offset` (px, + = down) properties.

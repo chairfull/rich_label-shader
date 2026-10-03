@@ -53,8 +53,8 @@ func _run() -> void:
 		# pre-multiplied by the texture sample (breaks MSDF fonts).
 		if "COLOR.r *" in code:
 			_fail("case %d: fragment decodes identity from pre-multiplied COLOR" % i)
-		if "varying vec2 rl_xfer;" not in code \
-				or "rl_xfer = vec2(clamp(COLOR.r" not in code:
+		if "varying vec3 rl_xfer;" not in code \
+				or "rl_xfer = vec3(clamp(COLOR.r" not in code:
 			_fail("case %d: identity varying not emitted" % i)
 		if "~test_" in cases[i] and "instance uniform bool" not in code:
 			_fail("case %d: inline item did not emit instance uniforms" % i)
