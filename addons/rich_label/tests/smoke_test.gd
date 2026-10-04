@@ -61,15 +61,13 @@ func _run() -> void:
 		if "[wave" in cases[i]:
 			if "glyph_origin_arr" not in code:
 				_fail("case %d: vertex tag did not emit geometry arrays" % i)
-			if "fx_time" not in code:
-				_fail("case %d: fx_time uniform missing for TIME-using tag" % i)
-			if _has_raw_time_token(code):
-				_fail("case %d: raw engine TIME survived rewrite" % i)
+			if "(TIME * time_scale)" not in code:
+				_fail("case %d: TIME not rewritten to scaled shader clock" % i)
+			if "uniform float time_scale" not in code:
+				_fail("case %d: time_scale uniform missing" % i)
 		if "[outline" in cases[i] and "layer_radius_arr" not in code:
 			_fail("case %d: dilation uniform missing for outline/glow" % i)
-		# Any fx_time reference must have its uniform declared.
-		if "fx_time" in code and "uniform float fx_time" not in code:
-			_fail("case %d: fx_time referenced but never declared" % i)
+
 		if "[shadow" in cases[i] and "[outline" not in cases[i] \
 				and "layer_radius_arr" in code and "[glow]" not in cases[i]:
 			_fail("case %d: shadow alone triggered dilation" % i)

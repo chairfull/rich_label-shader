@@ -154,6 +154,14 @@ func get_vertex() -> String:
 
 Available hooks: `get_vertex()` / `get_fragment()` (GLSL snippets; `v`, `it`/`intro_t`, `ot`/`outro_t`, `seed`, `origin`, `gsz` in vertex; `c`, `it`, `ot`, `seed` in fragment), `get_layer_count()` + `get_layer_config(i)` for outline/glow/shadow-style extra draw layers, `mutate_font()` / `mutate_font_size()` / `mutate_color()`, and `init_from_args()` for positional params. `TIME` in snippets is rewritten to the label's `fx_time` clock. See `rl_tags/wave.gd` and `rl_tags/outline.gd` for complete examples.
 
+## Animation model
+
+RichLabel has no `_process` and never redraws per frame. All animation —
+effect clocks, typewriter loops — runs in the generated shader from the
+engine `TIME` (scaled by the `time_scale` uniform). The CPU only rebuilds
+on text/style changes and pushes uniforms on property edits. Note: shader
+`TIME` is wall-clock, so `SceneTree` pause does not freeze effects.
+
 ## Inline scenes and tags
 
 `~scene_id` instantiates a `.tscn` (Control scenes are laid out inline in the

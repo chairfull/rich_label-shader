@@ -89,8 +89,6 @@ var _link_data: Dictionary[int, LinkData]
 var _hovered_link_index := -1
 var _inline_pool: Dictionary[String, Array] = {}
 var _inline_relayout_pending := false
-var _fx_time := 0.0
-var _uses_fx_clock := false
 var _bar_surfaces: Array[Dictionary] = []  ## { tex: Texture2D, mesh: ArrayMesh } for underline/strikethrough bars
 static var _bar_white_tex: Texture2D = null
 ## Persistent default-tag instances carrying the outline/glow defaults. These
@@ -98,7 +96,6 @@ static var _bar_white_tex: Texture2D = null
 ## longer hold their own outline/glow settings (that lives on the tags).
 var _default_outline: RichTag = null
 var _default_glow: RichTag = null
-var _loop_phase := 0.0
 var _batch_surfaces: Array[Dictionary] = []  ## { tex: Texture2D, mesh: ArrayMesh }
 static var _shader_cache: Dictionary[int, Shader] = {}
 static var _node_ref_re: RegEx
@@ -285,13 +282,21 @@ func _on_reveal_finished(intro: bool) -> void:
 @export_range(0.0, 3.0, 0.01) var newline_pause := 0.55
 
 ## Multiplies effect animation speed (shader fx_time) and reveal tween speeds.
-@export_range(0.0, 8.0, 0.01) var time_scale := 1.0
+@export_range(0.0, 8.0, 0.01) var time_scale := 1.0:
+	set(value):
+		if time_scale != value:
+			time_scale = value
+			_set_shader_param(&"time_scale", value)
 
 ## Starts a reveal automatically when the node enters the tree.
 @export var autoplay := AutoplayMode.NONE
 
 ## Continuously drives progress without tweens.
-@export var loop_mode := LoopMode.NONE
+@export var loop_mode := LoopMode.NONE:
+	set(value):
+		if loop_mode != value:
+			loop_mode = value
+			_set_shader_param(&"loop_mode", int(value))
 
 ## Measure text with TextServer shaping (kerning-aware) instead of per-char sizing.
 @export var shaping := true
@@ -377,31 +382,7 @@ func _ready() -> void:
 		AutoplayMode.OUTRO:
 			play_outro.call_deferred()
 
-func _process(delta: float) -> void:
-	# Clamp per-frame contribution: editor stalls / alt-tab produce huge deltas
-	# that would otherwise read as sudden jumps ("warps") in effect time.
-	var scaled := minf(delta, 0.1) * time_scale
-	if scaled > 0.0 and visible:
-		if _uses_fx_clock and is_inside_tree():
-			_fx_time += scaled
-			_set_shader_param(&"fx_time", _fx_time)
-		_loop_tick(scaled)
-
 ## Drives progress continuously for loop modes (tweens take precedence).
-func _loop_tick(scaled_delta: float) -> void:
-	if loop_mode == LoopMode.NONE or not is_inside_tree():
-		return
-	if _tween and _tween.is_running():
-		_loop_phase = clampf((progress + 1.0) * 0.5, 0.0, 1.0)
-		return
-	match loop_mode:
-		LoopMode.LOOP:
-			_loop_phase = fposmod(_loop_phase + scaled_delta / maxf(0.05, anim_intro_duration), 1.0)
-			progress = -1.0 + _loop_phase
-		LoopMode.PING_PONG:
-			_loop_phase = fposmod(_loop_phase + scaled_delta / maxf(0.05, anim_intro_duration + anim_outro_duration) * 0.5, 2.0)
-			progress = -1.0 + (1.0 - absf(_loop_phase - 1.0)) * 2.0
-
 ## Jumps to an absolute reveal state: -1 fully hidden, 0 fully shown,
 ## 1 hidden again through the outro.
 func seek(p: float) -> void:
@@ -1566,6 +1547,10 @@ func _update_shader() -> void:
 	_set_shader_param(&"msdf_pixel_range", px_range)
 
 	_set_shader_param(&"progress", progress)
+	_set_shader_param(&"time_scale", time_scale)
+	_set_shader_param(&"loop_mode", int(loop_mode))
+	_set_shader_param(&"loop_intro_dur", anim_intro_duration)
+	_set_shader_param(&"loop_outro_dur", anim_outro_duration)
 	_set_shader_param(&"intro_stagger", anim_intro_stagger)
 	_set_shader_param(&"outro_stagger", anim_outro_stagger)
 	_set_shader_param(&"underline_color", underline_color)
@@ -1773,12 +1758,14 @@ static func _strip_comments(s: String) -> String:
 		out += (line.split("//", true, 1)[0].strip_edges() if "//" in line else line.strip_edges())
 	return out
 
-## Rewrites the engine TIME token to the label's own fx_time uniform so
-## effects respect time_scale and pause state.
+## Rewrites the engine TIME token to scaled shader time so effects
+## respect time_scale. Fully shader-side: no _process, no per-frame CPU.
+## Note: shader TIME is wall-clock; SceneTree pause does not freeze effects
+## (set time_scale = 0 to freeze, though phase resets — use with care).
 static func _rewrite_fx_time(snippet: String) -> String:
 	if _time_token_re == null:
 		_time_token_re = RegEx.create_from_string("\\bTIME\\b")
-	return _time_token_re.sub(snippet, "fx_time", true)
+	return _time_token_re.sub(snippet, "(TIME * time_scale)", true)
 
 func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, need_dilation: bool, need_glow: bool) -> String:
 	var max_arr  := _get_max_array_size()
@@ -1806,8 +1793,6 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 	# Effects may reference the label clock either via engine TIME (rewritten
 	# above) or by naming fx_time directly — both need the uniform.
 	for s in helpers + vert_calls + frag_calls:
-		if "fx_time" in s:
-			_uses_fx_clock = true
 			break
 
 	# Geometry arrays (origin/gsz/font_size) are only needed when some tag's
@@ -1834,8 +1819,15 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 	var cv: Array[String] = [
 		"float w_intro = max(0.001, 1.0 - intro_stagger);",
 		"float w_outro = max(0.001, 1.0 - outro_stagger);",
-		"float p_intro = clamp(progress + 1.0, 0.0, 1.0);",
-		"float p_outro = clamp(progress,       0.0, 1.0);",
+		"float eff_progress = progress;",
+		"if (loop_mode == 1) {",
+		"\teff_progress = -1.0 + mod(TIME * time_scale / max(loop_intro_dur, 0.05), 1.0);",
+		"} else if (loop_mode == 2) {",
+		"\tfloat _ph = mod(TIME * time_scale / (max(loop_intro_dur + loop_outro_dur, 0.05) * 0.5), 2.0);",
+		"\teff_progress = -1.0 + (1.0 - abs(_ph - 1.0)) * 2.0;",
+		"}",
+		"float p_intro = clamp(eff_progress + 1.0, 0.0, 1.0);",
+		"float p_outro = clamp(eff_progress,       0.0, 1.0);",
 	]
 	if has_imgs:
 		cv.append_array([
@@ -1941,8 +1933,11 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 		"uniform vec4 strikethrough_color  = vec4(0.0);",
 	]
 	if has_lnks: su.append("uniform float link_states_arr[%d];" % link_cap)
-	if _uses_fx_clock:
-		su.append("uniform float fx_time = 0.0;")
+	# Animation clock and loop state are shader-side (TIME * time_scale).
+	su.append("uniform float time_scale = 1.0;")
+	su.append("uniform int loop_mode = 0;")
+	su.append("uniform float loop_intro_dur = 1.0;")
+	su.append("uniform float loop_outro_dur = 1.0;")
 	out.append("\n".join(su))
 
 	# Glyph uniforms.
