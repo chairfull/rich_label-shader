@@ -99,5 +99,46 @@ func _run() -> void:
 	print("render (%.1f ms baseline):" % base)
 	print("  RichLabel x%d:    +%.1f ms (%.3f ms/label)" % [N, rl_ms - base, (rl_ms - base) / N])
 	print("  RichTextLabel x%d: +%.1f ms (%.3f ms/label)" % [N, rtl_frame - base, (rtl_frame - base) / N])
+
+	# Animated: RichLabel [wave] tag (GPU) vs RichTextLabel custom effect (CPU re-render).
+	for R in rtls:
+		(R as Node).queue_free()
+	for i in 10:
+		await process_frame
+	var wave_fx = load("res://addons/rich_label/tests/bench_wave_effect.gd").new()
+	var rtls_fx: Array = []
+	for i in N:
+		var R := RichTextLabel.new()
+		R.bbcode_enabled = true
+		R.install_effect(wave_fx)
+		R.text = "[bwave]-%d[/bwave]" % (10 + i)
+		R.position = Vector2(50 + (i % 20) * 75, 50 + (i / 20) * 160)
+		R.size = Vector2(70, 50)
+		R.add_theme_font_size_override("normal_font_size", 28)
+		win.add_child(R)
+		rtls_fx.append(R)
+	for i in 10:
+		await process_frame
+	await RenderingServer.frame_post_draw
+	var rtl_fx_frame := await _frame_ms(FRAMES)
+
+	var rls_wave: Array = []
+	for i in N:
+		var L = RL.new()
+		L.text = "[wave amp=8]-%d]" % (10 + i)
+		L.position = Vector2(50 + (i % 20) * 75, 50 + (i / 20) * 160)
+		L.size = Vector2(70, 50)
+		L.font_size = 28
+		L.head = ""
+		win.add_child(L)
+		rls_wave.append(L)
+	for i in 10:
+		await process_frame
+	await RenderingServer.frame_post_draw
+	var rl_wave_frame := await _frame_ms(FRAMES)
+
+	print("animated render:")
+	print("  RichLabel [wave] x%d:      +%.1f ms (%.3f ms/label)" % [N, rl_wave_frame - base, (rl_wave_frame - base) / N])
+	print("  RichTextLabel [bwave] x%d: +%.1f ms (%.3f ms/label)" % [N, rtl_fx_frame - base, (rtl_fx_frame - base) / N])
 	print("=== DONE ===")
 	quit()
