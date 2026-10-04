@@ -1573,7 +1573,8 @@ func _update_shader() -> void:
 
 	_update_link_shader_state()
 
-	var glyph_array_size := maxi(1, _total_glyphs)
+	var max_arr2 := _get_max_array_size()
+	var glyph_array_size := _shader_array_tier(maxi(1, _total_glyphs), max_arr2)
 	var glyph_mask_arr := RTUtils.packedInt32(glyph_array_size)
 	var font_sizes := RTUtils.packedFloat32(glyph_array_size)
 	var intro_t := RTUtils.packedFloat32(glyph_array_size)
@@ -1583,7 +1584,10 @@ func _update_shader() -> void:
 	var sizes := RTUtils.packedVec2(glyph_array_size) if need_geom else PackedVector2Array()
 	var link_indices := RTUtils.packedInt32(glyph_array_size, -1)
 
-	var layer_array_size := maxi(1, glyph_array_size * _total_layers)
+	var layer_array_size := _shader_array_tier(maxi(1, maxi(1, _total_glyphs) * _total_layers), max_arr2)
+	# Identity decode factors (uniforms; the shader source is text-independent).
+	_set_shader_param(&"glyph_count_factor", maxf(1.0, float(maxi(1, _total_glyphs) - 1)))
+	_set_shader_param(&"layer_count_factor", maxf(1.0, float(_total_layers - 1)))
 	var layer_color_arr := RTUtils.packedColor(layer_array_size)
 	var layer_sd_bias_arr := RTUtils.packedFloat32(layer_array_size)
 	var layer_feather_arr := RTUtils.packedFloat32(layer_array_size)
@@ -1780,10 +1784,11 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 	var max_arr  := _get_max_array_size()
 	var has_lnks := not _link_data.is_empty()
 	var link_cap := maxi(1, mini(_link_data.size(), MAX_LINKS))
-	var arr_sz   := clampi(_total_glyphs, 1, max_arr)
-	var layer_sz := clampi(_total_glyphs * _total_layers, 1, max_arr)
-	var gcf      := "%.1f" % maxf(1.0, _total_glyphs - 1.0)
-	var lcf      := "%.1f" % maxf(1.0, _total_layers - 1.0)
+	# Fixed array-size tiers so the generated source (and thus the cached
+	# compiled shader) is shared across labels with different text lengths.
+	# Damage numbers and other short labels all hit the 64 tier.
+	var arr_sz   := _shader_array_tier(maxi(1, _total_glyphs), max_arr)
+	var layer_sz := _shader_array_tier(maxi(1, _total_glyphs * _total_layers), max_arr)
 
 	# -- Collect tag contributions ----------------------------------------
 	var helpers:    Array[String] = []
@@ -1836,8 +1841,8 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 		cv.append_array([
 			"int layer; int glyph; int mask; float base_intro_t; float base_outro_t; float seed;",
 			"if (is_text) {",
-			"\tlayer        = int(clamp(rl_xfer.y * %s + 0.5, 0.0, %s));" % [lcf, lcf],
-			"\tglyph        = int(clamp(rl_xfer.x * %s + 0.5, 0.0, %s));" % [gcf, gcf],
+			"\tlayer        = int(clamp(rl_xfer.y * layer_count_factor + 0.5, 0.0, layer_count_factor));",
+			"\tglyph        = int(clamp(rl_xfer.x * glyph_count_factor + 0.5, 0.0, glyph_count_factor));",
 			"\tmask         = glyph_mask_arr[glyph];",
 			"\tbase_intro_t = glyph_intro_t[glyph];",
 			"\tbase_outro_t = glyph_outro_t[glyph];",
@@ -1857,8 +1862,8 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 		cv.append("}")
 	else:
 		cv.append_array([
-			"int   layer        = int(clamp(rl_xfer.y * %s + 0.5, 0.0, %s));" % [lcf, lcf],
-			"int   glyph        = int(clamp(rl_xfer.x * %s + 0.5, 0.0, %s));" % [gcf, gcf],
+			"int   layer        = int(clamp(rl_xfer.y * layer_count_factor + 0.5, 0.0, layer_count_factor));",
+			"int   glyph        = int(clamp(rl_xfer.x * glyph_count_factor + 0.5, 0.0, glyph_count_factor));",
 			"int   mask         = glyph_mask_arr[glyph];",
 			"float base_intro_t = glyph_intro_t[glyph];",
 			"float base_outro_t = glyph_outro_t[glyph];",
@@ -1943,6 +1948,8 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 	# Glyph uniforms.
 	var gu: PackedStringArray = [
 		"group_uniforms Glyphs;",
+		"uniform float glyph_count_factor = 1.0;",
+		"uniform float layer_count_factor = 1.0;",
 		"uniform int   glyph_mask_arr[%d];" % arr_sz,
 		"uniform float glyph_intro_t[%d];"  % arr_sz,
 		"uniform float glyph_outro_t[%d];"  % arr_sz,
@@ -2118,6 +2125,14 @@ func _build_shader_code(tags: Array[RichTag], bits: Dictionary, has_imgs: bool, 
 		push_warning("RichLabel: uniform budget exceeded (~%d KB for %d glyphs × %d layers). Text beyond the limit will render incorrectly; consider splitting it across labels." % [uni_bytes / 1024, _total_glyphs, _total_layers])
 
 	return "\n\n".join(PackedStringArray(out))
+
+## Picks a fixed uniform-array tier so shader sources are shared across
+## labels with different text lengths (the cache keys on source hash).
+static func _shader_array_tier(need: int, max_arr: int) -> int:
+	for tier in [64, 256, 1024, 4096]:
+		if need <= tier:
+			return mini(tier, max_arr)
+	return max_arr
 
 static func _get_max_array_size() -> int:
 	var rd := RenderingServer.get_rendering_device()

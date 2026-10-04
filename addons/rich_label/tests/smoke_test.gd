@@ -77,8 +77,9 @@ func _run() -> void:
 		# the CPU upload layout exactly.
 		if "[outline" in cases[i] or "[shadow" in cases[i]:
 			var stride := _extract_layer_stride(code)
-			if stride != -1 and stride != label._total_glyphs:
-				_fail("case %d: layer stride %d != glyph count %d" % [i, stride, label._total_glyphs])
+			var want_tier := RichLabel._shader_array_tier(maxi(1, label._total_glyphs), 4096)
+			if stride != -1 and stride != want_tier:
+				_fail("case %d: layer stride %d != tier %d" % [i, stride, want_tier])
 
 	_check_parser()
 	_check_layout(label)
