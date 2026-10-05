@@ -166,6 +166,15 @@ Available hooks: `get_vertex()` / `get_fragment()` (GLSL snippets; `v`, `it`/`in
   All labels share one compiled shader.
 - `demo_inline.tscn` — inline images (`~id`) and Control scenes with tags
   applied to them.
+- `demo_hub.tscn` — meta demo: `<` `>` arrows and a dropdown to swap between
+  the four demos.
+
+## Editor tag tweaker
+
+The plugin adds a **Tag Tweaker** dock (right side). It scans all tags in
+`rl_tags/`, lists them, and for the selected tag shows a slider/tweaker for
+every exported param with a live preview. The **copy markup** button sends
+the current `[tag param=...]...]` string to the clipboard.
 
 ## Animation model
 

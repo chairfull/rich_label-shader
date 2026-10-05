@@ -1,5 +1,6 @@
 extends Control
 ## Demo: effect gallery with live param sliders, global speed, and replay.
+## Layout: sliders stacked on the left, preview text on the right.
 ## All animation is shader-side; sliders just rebuild the tag markup.
 
 var _rows: Array = [
@@ -16,7 +17,7 @@ var _rows: Array = [
 ]
 
 var _labels: Array[RichLabel] = []
-var _param_vals: Array = []  # parallel to _rows: dict param_name -> float
+var _param_vals: Array = []
 
 func _ready() -> void:
 	var bg := ColorRect.new()
@@ -27,15 +28,15 @@ func _ready() -> void:
 
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
-	scroll.offset_left = 60
-	scroll.offset_right = -60
-	scroll.offset_top = 30
-	scroll.offset_bottom = -110
+	scroll.offset_left = 40
+	scroll.offset_right = -40
+	scroll.offset_top = 24
+	scroll.offset_bottom = -100
 	add_child(scroll)
 
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_theme_constant_override("separation", 10)
+	box.add_theme_constant_override("separation", 18)
 	scroll.add_child(box)
 
 	var title := RichLabel.new()
@@ -50,32 +51,43 @@ func _ready() -> void:
 			vals[pv[0]] = pv[1]
 		_param_vals.append(vals)
 
-		var line := RichLabel.new()
-		line.font_size = 30
-		line.custom_minimum_size = Vector2(0, 50)
-		if row.get("head", false):
-			line.head = row["tag"]
-		box.add_child(line)
-		_labels.append(line)
+		# Row: sliders (left, vertical) | preview (right).
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 30)
+		box.add_child(h)
 
-		var sliders := HBoxContainer.new()
-		sliders.add_theme_constant_override("separation", 18)
-		box.add_child(sliders)
+		var sliders := VBoxContainer.new()
+		sliders.custom_minimum_size = Vector2(300, 0)
+		sliders.add_theme_constant_override("separation", 6)
+		h.add_child(sliders)
+
+		var name_lab := Label.new()
+		name_lab.text = row["tag"]
+		name_lab.add_theme_font_size_override("font_size", 20)
+		name_lab.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9))
+		sliders.add_child(name_lab)
+
 		for pv in row["params"]:
 			sliders.add_child(_make_slider(i, pv[0], pv[1], pv[2], pv[3]))
+
+		var preview := RichLabel.new()
+		preview.font_size = 32
+		preview.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		preview.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(preview)
+		_labels.append(preview)
 		_refresh_row(i)
 
-		var spacer := Control.new()
-		spacer.custom_minimum_size = Vector2(0, 10)
-		box.add_child(spacer)
+		var sep := HSeparator.new()
+		box.add_child(sep)
 
 	# Bottom bar: global speed + replay.
 	var bar := HBoxContainer.new()
 	bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	bar.offset_left = 60
 	bar.offset_right = -60
-	bar.offset_top = -90
-	bar.offset_bottom = -30
+	bar.offset_top = -80
+	bar.offset_bottom = -24
 	bar.add_theme_constant_override("separation", 16)
 	bar.alignment = BoxContainer.ALIGNMENT_CENTER
 	add_child(bar)
@@ -103,6 +115,7 @@ func _make_slider(row_i: int, pname: String, val: float, lo: float, hi: float) -
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 8)
 	var lab := Label.new()
+	lab.custom_minimum_size = Vector2(110, 0)
 	lab.add_theme_font_size_override("font_size", 15)
 	lab.add_theme_color_override("font_color", Color(0.6, 0.6, 0.65))
 	h.add_child(lab)
@@ -111,7 +124,7 @@ func _make_slider(row_i: int, pname: String, val: float, lo: float, hi: float) -
 	sl.max_value = hi
 	sl.step = 0.1 if hi - lo > 2.0 else 0.01
 	sl.value = val
-	sl.custom_minimum_size = Vector2(160, 0)
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sl.value_changed.connect(_on_param.bind(row_i, pname, lab))
 	h.add_child(sl)
 	_update_param_label(lab, pname, val)
@@ -130,12 +143,16 @@ func _refresh_row(i: int) -> void:
 	var parts: PackedStringArray = []
 	for pv in row["params"]:
 		parts.append("%s=%s" % [pv[0], _fmt(_param_vals[i][pv[0]])])
-	var tag := "[%s %s]" % [row["tag"], " ".join(parts)]
-	_labels[i].text = tag + row["sample"] + "]"
+	var tag := "%s %s" % [row["tag"], " ".join(parts)]
+	if row.get("head", false):
+		_labels[i].head = tag
+		_labels[i].text = row["sample"]
+	else:
+		_labels[i].head = ""
+		_labels[i].text = "[%s]%s]" % [tag, row["sample"]]
 	_labels[i].play_intro()
 
 func _fmt(v: float) -> String:
-	# Trim trailing zeros for cleaner markup.
 	var s := "%.2f" % v
 	while s.ends_with("0"):
 		s = s.substr(0, s.length() - 1)

@@ -10,8 +10,13 @@ const DIR_SETTINGS := {
 	"rich_text/scenes_dir": "res://assets/scenes",
 }
 
+var _tweaker_dock: Control
+
 func _enter_tree() -> void:
 	add_custom_type("RichLabel", "Control", LABEL_SCRIPT, EditorInterface.get_base_control().get_theme_icon("RichTextLabel", "EditorIcons"))
+	_tweaker_dock = preload("res://addons/rich_label/tag_tweaker.gd").new()
+	_tweaker_dock.name = "Tag Tweaker"
+	add_control_to_dock(DOCK_SLOT_RIGHT_UL, _tweaker_dock)
 	for key: String in DIR_SETTINGS:
 		if not ProjectSettings.has_setting(key):
 			ProjectSettings.set_setting(key, DIR_SETTINGS[key])
@@ -28,3 +33,6 @@ func _enter_tree() -> void:
 
 func _exit_tree() -> void:
 	remove_custom_type("RichLabel")
+	if _tweaker_dock:
+		remove_control_from_docks(_tweaker_dock)
+		_tweaker_dock.queue_free()
