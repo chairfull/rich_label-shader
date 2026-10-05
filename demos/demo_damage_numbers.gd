@@ -11,8 +11,11 @@ var _count := 0
 var _counter: Label
 
 func _ready() -> void:
+	# Don't swallow clicks: we want them in _unhandled_input.
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bg := ColorRect.new()
 	bg.color = Color(0.05, 0.05, 0.08)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 

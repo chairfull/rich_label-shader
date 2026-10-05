@@ -15,6 +15,7 @@ var _hint: Label
 func _ready() -> void:
 	var bg := ColorRect.new()
 	bg.color = Color(0.05, 0.05, 0.08, 1.0)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 
