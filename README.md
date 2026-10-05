@@ -154,6 +154,19 @@ func get_vertex() -> String:
 
 Available hooks: `get_vertex()` / `get_fragment()` (GLSL snippets; `v`, `it`/`intro_t`, `ot`/`outro_t`, `seed`, `origin`, `gsz` in vertex; `c`, `it`, `ot`, `seed` in fragment), `get_layer_count()` + `get_layer_config(i)` for outline/glow/shadow-style extra draw layers, `mutate_font()` / `mutate_font_size()` / `mutate_color()`, and `init_from_args()` for positional params. `TIME` in snippets is rewritten to the label's `fx_time` clock. See `rl_tags/wave.gd` and `rl_tags/outline.gd` for complete examples.
 
+## Demos
+
+`demos/` has four runnable scenes (open them in the editor or run with F6):
+
+- `demo_dialogue.tscn` — RPG dialogue box: [blur] typewriter, click/space to
+  complete then advance. Shows the standard advance loop.
+- `demo_effects.tscn` — effect gallery: wave, rainbow, shake, blur/shred
+  reveals, underline/strikethrough, outline/glow.
+- `demo_damage_numbers.tscn` — pooled damage numbers; click for a burst.
+  All labels share one compiled shader.
+- `demo_inline.tscn` — inline images (`~id`) and Control scenes with tags
+  applied to them.
+
 ## Animation model
 
 RichLabel has no `_process` and never redraws per frame. All animation —
